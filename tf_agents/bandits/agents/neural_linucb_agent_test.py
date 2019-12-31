@@ -19,6 +19,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import os
+
 from absl.testing import parameterized
 import numpy as np
 import tensorflow as tf
@@ -39,17 +41,20 @@ tfd = tfp.distributions
 
 class DummyNet(network.Network):
 
-  def __init__(self, name=None, obs_dim=2, encoding_dim=10):
-    super(DummyNet, self).__init__(name, (), 'DummyNet')
+  def __init__(self, observation_spec, encoding_dim=10):
+    super(DummyNet, self).__init__(
+        observation_spec, state_spec=(), name='DummyNet')
+    context_dim = observation_spec.shape[0]
     self._layers.append(
         tf.keras.layers.Dense(
             encoding_dim,
             kernel_initializer=tf.compat.v1.initializers.constant(
-                np.ones([obs_dim, encoding_dim])),
+                np.ones([context_dim, encoding_dim])),
             bias_initializer=tf.compat.v1.initializers.constant(
                 np.zeros([encoding_dim]))))
 
-  def call(self, inputs, unused_step_type=None, network_state=()):
+  def call(self, inputs, step_type=None, network_state=()):
+    del step_type
     inputs = tf.cast(inputs, tf.float32)
     for layer in self.layers:
       inputs = layer(inputs)
@@ -151,7 +156,7 @@ class NeuralLinUCBAgentTest(tf.test.TestCase, parameterized.TestCase):
     action_spec = tensor_spec.BoundedTensorSpec(
         dtype=tf.int32, shape=(), minimum=0, maximum=num_actions - 1)
 
-    encoder = DummyNet(obs_dim=context_dim)
+    encoder = DummyNet(observation_spec)
     agent = neural_linucb_agent.NeuralLinUCBAgent(
         time_step_spec=time_step_spec,
         action_spec=action_spec,
@@ -169,7 +174,7 @@ class NeuralLinUCBAgentTest(tf.test.TestCase, parameterized.TestCase):
     action_spec = tensor_spec.BoundedTensorSpec(
         dtype=tf.int32, shape=(), minimum=0, maximum=num_actions - 1)
 
-    encoder = DummyNet(obs_dim=context_dim)
+    encoder = DummyNet(observation_spec)
     agent = neural_linucb_agent.NeuralLinUCBAgent(
         time_step_spec=time_step_spec,
         action_spec=action_spec,
@@ -196,7 +201,7 @@ class NeuralLinUCBAgentTest(tf.test.TestCase, parameterized.TestCase):
     time_step_spec = time_step.time_step_spec(observation_spec)
     action_spec = tensor_spec.BoundedTensorSpec(
         dtype=tf.int32, shape=(), minimum=0, maximum=num_actions - 1)
-    encoder = DummyNet(obs_dim=context_dim)
+    encoder = DummyNet(observation_spec)
     encoding_dim = 10
     agent = neural_linucb_agent.NeuralLinUCBAgent(
         time_step_spec=time_step_spec,
@@ -277,24 +282,24 @@ class NeuralLinUCBAgentTest(tf.test.TestCase, parameterized.TestCase):
     time_step_spec = time_step.time_step_spec(observation_spec)
     action_spec = tensor_spec.BoundedTensorSpec(
         dtype=tf.int32, shape=(), minimum=0, maximum=num_actions - 1)
-    encoder = DummyNet(obs_dim=context_dim)
+    encoder = DummyNet(observation_spec)
     encoding_dim = 10
+    variable_collection = neural_linucb_agent.NeuralLinUCBVariableCollection(
+        num_actions, encoding_dim)
     agent = neural_linucb_agent.NeuralLinUCBAgent(
         time_step_spec=time_step_spec,
         action_spec=action_spec,
         encoding_network=encoder,
         encoding_network_num_train_steps=10,
         encoding_dim=encoding_dim,
+        variable_collection=variable_collection,
         optimizer=tf.compat.v1.train.AdamOptimizer(learning_rate=0.001))
 
-    loss_info_before, _ = agent.train(experience)
-    loss_info_after, _ = agent.train(experience)
+    loss_info, _ = agent.train(experience)
     self.evaluate(agent.initialize())
     self.evaluate(tf.compat.v1.global_variables_initializer())
-    loss_before_value = self.evaluate(loss_info_before)
-    loss_after_value = self.evaluate(loss_info_after)
-    self.assertLess(
-        np.absolute(loss_before_value - loss_after_value), 10.0)
+    loss_value = self.evaluate(loss_info)
+    self.assertGreater(loss_value, 0.0)
 
   @test_cases()
   def testNeuralLinUCBUpdateNumTrainSteps10MaskedActions(
@@ -315,7 +320,7 @@ class NeuralLinUCBAgentTest(tf.test.TestCase, parameterized.TestCase):
     time_step_spec = time_step.time_step_spec(observation_spec)
     action_spec = tensor_spec.BoundedTensorSpec(
         dtype=tf.int32, shape=(), minimum=0, maximum=num_actions - 1)
-    encoder = DummyNet(obs_dim=context_dim)
+    encoder = DummyNet(observation_spec[0])
     encoding_dim = 10
     agent = neural_linucb_agent.NeuralLinUCBAgent(
         time_step_spec=time_step_spec,
@@ -326,14 +331,33 @@ class NeuralLinUCBAgentTest(tf.test.TestCase, parameterized.TestCase):
         optimizer=tf.compat.v1.train.AdamOptimizer(learning_rate=0.001),
         observation_and_action_constraint_splitter=lambda x: (x[0], x[1]))
 
-    loss_info_before, _ = agent.train(experience)
-    loss_info_after, _ = agent.train(experience)
+    loss_info, _ = agent.train(experience)
     self.evaluate(agent.initialize())
     self.evaluate(tf.compat.v1.global_variables_initializer())
-    loss_before_value = self.evaluate(loss_info_before)
-    loss_after_value = self.evaluate(loss_info_after)
-    self.assertLess(
-        np.absolute(loss_before_value - loss_after_value), 10.0)
+    loss_value = self.evaluate(loss_info)
+    self.assertGreater(loss_value, 0.0)
+
+  def testInitializeRestoreVariableCollection(self):
+    if not tf.executing_eagerly():
+      self.skipTest('Test only works in eager mode.')
+    num_actions = 5
+    encoding_dim = 7
+    variable_collection = neural_linucb_agent.NeuralLinUCBVariableCollection(
+        num_actions=num_actions, encoding_dim=encoding_dim)
+    self.evaluate(tf.compat.v1.global_variables_initializer())
+    self.evaluate(variable_collection.num_samples_list)
+    checkpoint = tf.train.Checkpoint(variable_collection=variable_collection)
+    checkpoint_dir = self.get_temp_dir()
+    checkpoint_prefix = os.path.join(checkpoint_dir, 'checkpoint')
+    checkpoint.save(file_prefix=checkpoint_prefix)
+
+    variable_collection.actions_from_reward_layer.assign(False)
+
+    latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir)
+    checkpoint_load_status = checkpoint.restore(latest_checkpoint)
+    self.evaluate(checkpoint_load_status.initialize_or_restore())
+    self.assertEqual(
+        self.evaluate(variable_collection.actions_from_reward_layer), True)
 
 
 if __name__ == '__main__':

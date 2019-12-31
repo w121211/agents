@@ -94,6 +94,7 @@ class NeuralLinUCBPolicy(tf_policy.Base):
         observation and mask.
       name: The name of this policy.
     """
+    encoding_network.create_variables()
     self._encoding_network = encoding_network
     self._reward_layer = reward_layer
     self._encoding_dim = encoding_dim
@@ -159,7 +160,7 @@ class NeuralLinUCBPolicy(tf_policy.Base):
     if policy_utilities.InfoFields.PREDICTED_REWARDS_MEAN in emit_policy_info:
       predicted_rewards_mean = tensor_spec.TensorSpec(
           [self._num_actions],
-          dtype=self._dtype)
+          dtype=tf.float32)
     info_spec = policy_utilities.PolicyInfo(
         predicted_rewards_mean=predicted_rewards_mean)
 
@@ -207,7 +208,6 @@ class NeuralLinUCBPolicy(tf_policy.Base):
     else:
       chosen_actions = greedy_actions
 
-    est_mean_reward = tf.cast(est_mean_reward, dtype=self._dtype)
     return chosen_actions, est_mean_reward
 
   def _get_actions_from_linucb(self, encoded_observation, mask):
@@ -238,7 +238,7 @@ class NeuralLinUCBPolicy(tf_policy.Base):
       chosen_actions = policy_utilities.masked_argmax(
           stacked_p_values, mask, output_type=tf.int32)
 
-    est_mean_reward = tf.stack(est_rewards, axis=-1)
+    est_mean_reward = tf.cast(tf.stack(est_rewards, axis=-1), tf.float32)
     return chosen_actions, est_mean_reward
 
   def _distribution(self, time_step, policy_state):

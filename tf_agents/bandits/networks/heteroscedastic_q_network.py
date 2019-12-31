@@ -13,35 +13,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Sample Keras networks for DQN."""
+"""Network Outputting Expected Value and Variance of Rewards."""
 
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+
+import collections
 
 import gin
 import tensorflow as tf
 
 from tf_agents.networks import encoding_network
 from tf_agents.networks import network
+from tf_agents.networks import q_network
 
 
-def validate_specs(action_spec, observation_spec):
-  """Validates the spec contains a single action."""
-  del observation_spec  # not currently validated
-
-  flat_action_spec = tf.nest.flatten(action_spec)
-  if len(flat_action_spec) > 1:
-    raise ValueError('Network only supports action_specs with a single action.')
-
-  if flat_action_spec[0].shape not in [(), (1,)]:
-    raise ValueError(
-        'Network only supports action_specs with shape in [(), (1,)])')
+class QBanditNetworkResult(collections.namedtuple(
+    'QBanditNetworkResult', ('q_value_logits', 'log_variance'))):
+  pass
 
 
 @gin.configurable
-class QNetwork(network.Network):
-  """Feed Forward network."""
+class HeteroscedasticQNetwork(network.Network):
+  """Network Outputting Expected Value and Variance of Rewards."""
 
   def __init__(self,
                input_tensor_spec,
@@ -54,9 +49,11 @@ class QNetwork(network.Network):
                activation_fn=tf.keras.activations.relu,
                kernel_initializer=None,
                batch_squash=True,
+               min_variance=0.1,
+               max_variance=10000.0,
                dtype=tf.float32,
-               name='QNetwork'):
-    """Creates an instance of `QNetwork`.
+               name='HeteroscedasticQNetwork'):
+    """Creates an instance of `HeteroscedasticQNetwork`.
 
     Args:
       input_tensor_spec: A nest of `tensor_spec.TensorSpec` representing the
@@ -64,14 +61,14 @@ class QNetwork(network.Network):
       action_spec: A nest of `tensor_spec.BoundedTensorSpec` representing the
         actions.
       preprocessing_layers: (Optional.) A nest of `tf.keras.layers.Layer`
-        representing preprocessing for the different observations.
-        All of these layers must not be already built. For more details see
-        the documentation of `networks.EncodingNetwork`.
+        representing preprocessing for the different observations. All of these
+        layers must not be already built. For more details see the documentation
+        of `networks.EncodingNetwork`.
       preprocessing_combiner: (Optional.) A keras layer that takes a flat list
-        of tensors and combines them. Good options include
-        `tf.keras.layers.Add` and `tf.keras.layers.Concatenate(axis=-1)`.
-        This layer must not be already built. For more details see
-        the documentation of `networks.EncodingNetwork`.
+        of tensors and combines them. Good options include `tf.keras.layers.Add`
+        and `tf.keras.layers.Concatenate(axis=-1)`. This layer must not be
+        already built. For more details see the documentation of
+        `networks.EncodingNetwork`.
       conv_layer_params: Optional list of convolution layers parameters, where
         each item is a length-three tuple indicating (filters, kernel_size,
         stride).
@@ -89,6 +86,10 @@ class QNetwork(network.Network):
       batch_squash: If True the outer_ranks of the observation are squashed into
         the batch dimension. This allow encoding networks to be used with
         observations with shape [BxTx...].
+      min_variance: Float. The minimum allowed predicted variance. Predicted
+        variances less than this value will be clipped to this value.
+      max_variance: Float. The maximum allowed predicted variance. Predicted
+        variances greater than this value will be clipped to this value.
       dtype: The dtype to use by the convolution and fully connected layers.
       name: A string representing the name of the network.
 
@@ -96,7 +97,7 @@ class QNetwork(network.Network):
       ValueError: If `input_tensor_spec` contains more than one observation. Or
         if `action_spec` contains more than one action.
     """
-    validate_specs(action_spec, input_tensor_spec)
+    q_network.validate_specs(action_spec, input_tensor_spec)
     action_spec = tf.nest.flatten(action_spec)[0]
     num_actions = action_spec.maximum - action_spec.minimum + 1
     encoder_input_tensor_spec = input_tensor_spec
@@ -121,7 +122,7 @@ class QNetwork(network.Network):
         bias_initializer=tf.compat.v1.initializers.constant(-0.2),
         dtype=dtype)
 
-    super(QNetwork, self).__init__(
+    super(HeteroscedasticQNetwork, self).__init__(
         input_tensor_spec=input_tensor_spec,
         state_spec=(),
         name=name)
@@ -129,7 +130,17 @@ class QNetwork(network.Network):
     self._encoder = encoder
     self._q_value_layer = q_value_layer
 
-  def call(self, observation, step_type=None, network_state=(), training=False):
+    self._log_variance_layer = tf.keras.layers.Dense(
+        num_actions,
+        activation=None,
+        kernel_initializer=tf.compat.v1.initializers.random_uniform(
+            minval=-0.03, maxval=0.03),
+        dtype=dtype)
+
+    self._min_variance = min_variance
+    self._max_variance = max_variance
+
+  def call(self, observation, step_type=None, network_state=()):
     """Runs the given observation through the network.
 
     Args:
@@ -137,13 +148,19 @@ class QNetwork(network.Network):
       step_type: The step type for the given observation. See `StepType` in
         time_step.py.
       network_state: A state tuple to pass to the network, mainly used by RNNs.
-      training: Whether the output is being used for training.
 
     Returns:
-      A tuple `(logits, network_state)`.
+      An instance of `QBanditNetworkResult`.
     """
     state, network_state = self._encoder(
-        observation, step_type=step_type, network_state=network_state,
-        training=training)
-    q_value = self._q_value_layer(state, training=training)
-    return q_value, network_state
+        observation, step_type=step_type, network_state=network_state)
+
+    log_variance = tf.clip_by_value(
+        self._log_variance_layer(state), tf.math.log(self._min_variance),
+        tf.math.log(self._max_variance))
+
+    q_value_logits = self._q_value_layer(state)
+
+    result = QBanditNetworkResult(q_value_logits, log_variance)
+
+    return (result, network_state)
