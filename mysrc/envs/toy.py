@@ -15,9 +15,9 @@ from tf_agents.networks import utils as network_utils
 from tf_agents.utils import nest_utils
 
 
-CANVAS_WIDTH = 64
-RECT_WIDTH = 10
-N_ITEMS = 1
+CANVAS_WIDTH = 128
+# RECT_WIDTH = 10
+RECTS_WH = [[10, 10], [20, 10], [10, 20]]
 
 
 class RectEnv(gym.Env):
@@ -26,11 +26,10 @@ class RectEnv(gym.Env):
         self.max_step = 10
         self.cur_step = 0
         self.width = CANVAS_WIDTH
-        self.rect_wh = np.array(
-            [RECT_WIDTH, RECT_WIDTH], dtype=np.float32) / self.width
-        self.n_items = N_ITEMS
+        self.rects_wh = np.array(RECTS_WH, dtype=np.int32)
+        self.n_items = len(RECTS_WH)
         self.action_map = np.array(
-            [-8, 8, -1, 1, 0], dtype=np.float32) / self.width
+            [-8, 8, -1, 1, 0], dtype=np.float) / self.width
 
         # self.observation_space = spaces.Dict(
         #     {
@@ -73,11 +72,11 @@ class RectEnv(gym.Env):
     def reset(self):
         self.cur_step = 0
 
-        xy0 = np.random.rand(self.n_items, 2)
+        cxy = np.random.randint(0, self.width, self.n_items)
         self.target_coord = np.concatenate(
-            [xy0, xy0 + np.tile(self.rect_wh, (self.n_items, 1))], axis=1)
-        self.cur_coord = np.tile(
-            np.array([0, 0, *tuple(self.rect_wh)], dtype=np.float32), (self.n_items, 1))
+            [cxy-wh/2, cxy+wh/2], axis=1).astype(np.int32)
+        self.cur_coord = np.array(
+            [np.concatenate([[0, 0], wh]) for wh in self.rects_wh], dtype=np.int32)
 
         return self._obs()
 
@@ -92,13 +91,14 @@ class RectEnv(gym.Env):
         # print(self.action_map[action[0]], self.action_map[action[1]])
         i = action[0]
         dxy = np.array(
-            [self.action_map[action[1]], self.action_map[action[2]]], dtype=np.float32
+            [self.action_map[action[1]], self.action_map[action[2]]], dtype=np.float
         )
-
         xy0 = self.cur_coord[i, :2] + dxy
-        self.cur_coord[i] = np.concatenate([xy0, xy0 + self.rect_wh], axis=0)
+        self.cur_coord[i] = np.concatenate(
+            [xy0, xy0 + self.rects_wh[i]], axis=0)
 
-        reward = self._reward(self.cur_coord, self.target_coord)
+        reward = self._reward(self.cur_coord / self.width,
+                              self.target_coord / self.width)
         done = self.cur_step >= self.max_step
         self.cur_step += 1
 
@@ -109,16 +109,11 @@ class RectEnv(gym.Env):
         im = Image.new("L", (self.width, self.width))
         draw = ImageDraw.Draw(im)
 
-        coord = (coord * self.width).astype(np.int16)
         for _, c in enumerate(coord):
             draw.rectangle(tuple(c), fill=255)
-            # if i == 0:
-            #     draw.rectangle(tuple(c), fill=255)
-            # else:
-            #     draw.ellipse(tuple(c), fill=255)
 
         # normalize & transform image
-        x = np.array(im, dtype=np.float32) / 255.0
+        x = np.array(im, dtype=np.float) / 255.0
         x = np.expand_dims(x, axis=-1)  # (H, W, C=1)
         return x
 
@@ -126,7 +121,7 @@ class RectEnv(gym.Env):
         return {
             "target": self._render(self.target_coord),
             "canvas": self._render(self.cur_coord),
-            "coord": self.cur_coord
+            "coord": self.cur_coord / self.width
         }
 
     def _reward(self, a_xy: np.array, b_xy: np.array):
@@ -163,7 +158,7 @@ class RectEnv(gym.Env):
         x0, y0 = coord
         self.obj_status = (
             np.array([[x0, y0, (x0 + self.obj_w), (y0 + self.obj_w)]],
-                     dtype=np.float32)
+                     dtype=np.float)
             / self.width
         )
         self.cur_im = self._render(x0, y0)

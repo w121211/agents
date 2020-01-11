@@ -56,11 +56,12 @@ from tf_agents.policies import policy_saver
 from tf_agents.replay_buffers import tf_uniform_replay_buffer
 from tf_agents.utils import common
 
-from envs.toy import RectEnv
+from envs.toy import RectEnv, CANVAS_WIDTH
+from models import easy
 
 flags.DEFINE_string('root_dir', os.getenv('TEST_UNDECLARED_OUTPUTS_DIR'),
                     'Root directory for writing logs/summaries/checkpoints.')
-flags.DEFINE_string('env_name', 'HalfCheetah-v2', 'Name of an environment')
+# flags.DEFINE_string('env_name', 'HalfCheetah-v2', 'Name of an environment')
 flags.DEFINE_integer('replay_buffer_capacity', 1001,
                      'Replay buffer capacity per env.')
 flags.DEFINE_integer('num_parallel_environments', 30,
@@ -84,7 +85,7 @@ FLAGS = flags.FLAGS
 @gin.configurable
 def train_eval(
     root_dir,
-    env_name='HalfCheetah-v2',
+    # env_name='HalfCheetah-v2',
     # env_load_fn=suite_mujoco.load,
     env_load_fn=None,
     random_seed=0,
@@ -93,7 +94,7 @@ def train_eval(
     value_fc_layers=(200, 100),
     use_rnns=False,
     # Params for collect
-    num_environment_steps=10000000,
+    num_environment_steps=int(1e7),
     collect_episodes_per_iteration=30,
     num_parallel_environments=30,
     replay_buffer_capacity=1001,  # Per-environment
@@ -109,13 +110,9 @@ def train_eval(
     log_interval=50,
     summary_interval=50,
     summaries_flush_secs=1,
-    use_tf_functions=True, # use_tf_functions=False,
+    use_tf_functions=True,  # use_tf_functions=False,
     debug_summaries=False,
         summarize_grads_and_vars=False):
-    print(collect_episodes_per_iteration,
-          num_parallel_environments, num_eval_episodes)
-
-    """A simple train and eval for PPO."""
     if root_dir is None:
         raise AttributeError('train_eval requires a root_dir.')
 
@@ -156,15 +153,18 @@ def train_eval(
             'target': tf.keras.models.Sequential([
                 # tf.keras.applications.MobileNetV2(
                 #     input_shape=(64, 64, 1), include_top=False, weights=None),
-                tf.keras.layers.Conv2D(1, 6),
+                # tf.keras.layers.Conv2D(1, 6),
+                easy.encoder((CANVAS_WIDTH, CANVAS_WIDTH, 1)),
                 tf.keras.layers.Flatten()]),
             'canvas':  tf.keras.models.Sequential([
                 # tf.keras.applications.MobileNetV2(
                 #     input_shape=(64, 64, 1), include_top=False, weights=None),
-                tf.keras.layers.Conv2D(1, 6),
+                # tf.keras.layers.Conv2D(1, 6),
+                easy.encoder((CANVAS_WIDTH, CANVAS_WIDTH, 1)),
                 tf.keras.layers.Flatten()]),
             'coord': tf.keras.models.Sequential([
-                tf.keras.layers.Dense(5),
+                tf.keras.layers.Dense(64),
+                tf.keras.layers.Dense(64),
                 tf.keras.layers.Flatten()])
         }
         preprocessing_combiner = tf.keras.layers.Concatenate(axis=-1)
@@ -328,7 +328,7 @@ def main(_):
     tf.compat.v1.enable_v2_behavior()
     train_eval(
         FLAGS.root_dir,
-        env_name=FLAGS.env_name,
+        # env_name=FLAGS.env_name,
         use_rnns=FLAGS.use_rnns,
         num_environment_steps=FLAGS.num_environment_steps,
         collect_episodes_per_iteration=FLAGS.collect_episodes_per_iteration,
