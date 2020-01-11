@@ -1,3 +1,18 @@
+# coding=utf-8
+# Copyright 2018 The TF-Agents Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 r"""Train and Eval PPO.
 
 To run:
@@ -10,28 +25,38 @@ python tf_agents/agents/ppo/examples/v2/train_eval.py \
   --logtostderr
 ```
 """
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import os
 import time
 
-from absl import app, flags, logging
+from absl import app
+from absl import flags
+from absl import logging
 
 import gin
 import tensorflow as tf
-import tensorflow_probability as tfp
+
 from tf_agents.agents.ppo import ppo_agent
 from tf_agents.drivers import dynamic_episode_driver
-from tf_agents.environments import parallel_py_environment, tf_py_environment, suite_gym
+from tf_agents.environments import parallel_py_environment
+# from tf_agents.environments import suite_mujoco
+from tf_agents.environments import tf_py_environment
+from tf_agents.environments import suite_gym
 from tf_agents.eval import metric_utils
 from tf_agents.metrics import tf_metrics
-from tf_agents.networks import actor_distribution_network, actor_distribution_rnn_network, value_network, value_rnn_network
+from tf_agents.networks import actor_distribution_network
+from tf_agents.networks import actor_distribution_rnn_network
+from tf_agents.networks import value_network
+from tf_agents.networks import value_rnn_network
 from tf_agents.policies import policy_saver
 from tf_agents.replay_buffers import tf_uniform_replay_buffer
 from tf_agents.utils import common
-from tf_agents.specs import tensor_spec
-from tf_agents.trajectories import time_step as ts, trajectory
 
-from .canvas_env import CanvasEnv
-
+from envs.toy import RectEnv
 
 flags.DEFINE_string('root_dir', os.getenv('TEST_UNDECLARED_OUTPUTS_DIR'),
                     'Root directory for writing logs/summaries/checkpoints.')
@@ -61,6 +86,7 @@ def train_eval(
     root_dir,
     env_name='HalfCheetah-v2',
     # env_load_fn=suite_mujoco.load,
+    env_load_fn=None,
     random_seed=0,
     # TODO(b/127576522): rename to policy_fc_layers.
     actor_fc_layers=(200, 100),
@@ -83,9 +109,12 @@ def train_eval(
     log_interval=50,
     summary_interval=50,
     summaries_flush_secs=1,
-    use_tf_functions=True,
+    use_tf_functions=True, # use_tf_functions=False,
     debug_summaries=False,
         summarize_grads_and_vars=False):
+    print(collect_episodes_per_iteration,
+          num_parallel_environments, num_eval_episodes)
+
     """A simple train and eval for PPO."""
     if root_dir is None:
         raise AttributeError('train_eval requires a root_dir.')
@@ -115,16 +144,30 @@ def train_eval(
         # tf_env = tf_py_environment.TFPyEnvironment(
         #     parallel_py_environment.ParallelPyEnvironment(
         #         [lambda: env_load_fn(env_name)] * num_parallel_environments))
-
         eval_tf_env = tf_py_environment.TFPyEnvironment(
-            suite_gym.wrap_env(CanvasEnv()))
-        tf_env = tf_py_environment.TFPyEnvironment(
-            parallel_py_environment.ParallelPyEnvironment(
-                [lambda: tf_py_environment.TFPyEnvironment(
-                    suite_gym.wrap_env(CanvasEnv()))] * num_parallel_environments))
+            suite_gym.wrap_env(RectEnv()))
+        tf_env = tf_py_environment.TFPyEnvironment(parallel_py_environment.ParallelPyEnvironment(
+            [lambda: suite_gym.wrap_env(RectEnv())] * num_parallel_environments))
 
         optimizer = tf.compat.v1.train.AdamOptimizer(
             learning_rate=learning_rate)
+
+        preprocessing_layers = {
+            'target': tf.keras.models.Sequential([
+                # tf.keras.applications.MobileNetV2(
+                #     input_shape=(64, 64, 1), include_top=False, weights=None),
+                tf.keras.layers.Conv2D(1, 6),
+                tf.keras.layers.Flatten()]),
+            'canvas':  tf.keras.models.Sequential([
+                # tf.keras.applications.MobileNetV2(
+                #     input_shape=(64, 64, 1), include_top=False, weights=None),
+                tf.keras.layers.Conv2D(1, 6),
+                tf.keras.layers.Flatten()]),
+            'coord': tf.keras.models.Sequential([
+                tf.keras.layers.Dense(5),
+                tf.keras.layers.Flatten()])
+        }
+        preprocessing_combiner = tf.keras.layers.Concatenate(axis=-1)
 
         if use_rnns:
             actor_net = actor_distribution_rnn_network.ActorDistributionRnnNetwork(
@@ -140,9 +183,14 @@ def train_eval(
             actor_net = actor_distribution_network.ActorDistributionNetwork(
                 tf_env.observation_spec(),
                 tf_env.action_spec(),
-                fc_layer_params=actor_fc_layers)
+                fc_layer_params=actor_fc_layers,
+                preprocessing_layers=preprocessing_layers,
+                preprocessing_combiner=preprocessing_combiner)
             value_net = value_network.ValueNetwork(
-                tf_env.observation_spec(), fc_layer_params=value_fc_layers)
+                tf_env.observation_spec(),
+                fc_layer_params=value_fc_layers,
+                preprocessing_layers=preprocessing_layers,
+                preprocessing_combiner=preprocessing_combiner)
 
         tf_agent = ppo_agent.PPOAgent(
             tf_env.time_step_spec(),
@@ -194,8 +242,7 @@ def train_eval(
         collect_driver = dynamic_episode_driver.DynamicEpisodeDriver(
             tf_env,
             collect_policy,
-            # observers=[replay_buffer.add_batch] + train_metrics,
-            observers=[replay_buffer.add_batch],
+            observers=[replay_buffer.add_batch] + train_metrics,
             num_episodes=collect_episodes_per_iteration)
 
         def train_step():
@@ -288,9 +335,7 @@ def main(_):
         num_parallel_environments=FLAGS.num_parallel_environments,
         replay_buffer_capacity=FLAGS.replay_buffer_capacity,
         num_epochs=FLAGS.num_epochs,
-        num_eval_episodes=FLAGS.num_eval_episodes,
-        use_tf_functions=False
-    )
+        num_eval_episodes=FLAGS.num_eval_episodes)
 
 
 if __name__ == '__main__':
