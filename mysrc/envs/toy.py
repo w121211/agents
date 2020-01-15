@@ -21,15 +21,14 @@ RECTS_WH = [[10, 10], [20, 10], [10, 20]]
 
 
 class RectEnv(gym.Env):
+    action_map = [-8, 8, -1, 1, 0]
 
     def __init__(self):
-        self.max_step = 10
+        self.max_step = 20
         self.cur_step = 0
         self.width = CANVAS_WIDTH
         self.rects_wh = np.array(RECTS_WH, dtype=np.int32)
         self.n_items = len(RECTS_WH)
-        self.action_map = np.array(
-            [-8, 8, -1, 1, 0], dtype=np.float) / self.width
 
         # self.observation_space = spaces.Dict(
         #     {
@@ -62,22 +61,25 @@ class RectEnv(gym.Env):
             spaces.Discrete(self.n_items),  # i_item
             spaces.Discrete(len(self.action_map)),  # i_dx
             spaces.Discrete(len(self.action_map)),  # i_dy
+            # spaces.Discrete(2),  # early stop
             # spaces.Box(low=0, high=self.width, shape=(2,))
         ])
 
         self.target_coord = None  # (n_obj, 4=(x0, y0, x1, y1))
         self.cur_coord = None  # (n_obj, 4=(x0, y0, x1, y1))
         self.viewer = None
+        self.target_im = None
 
     def reset(self):
         self.cur_step = 0
 
-        cxy = np.random.randint(0, self.width, self.n_items)
+        cxy = np.random.randint(0, self.width, (self.n_items, 2))
         self.target_coord = np.concatenate(
-            [cxy-wh/2, cxy+wh/2], axis=1).astype(np.int32)
+            [cxy-self.rects_wh/2, cxy+self.rects_wh/2], axis=1).astype(np.int32)
         self.cur_coord = np.array(
             [np.concatenate([[0, 0], wh]) for wh in self.rects_wh], dtype=np.int32)
 
+        self.target_im = self._render(self.target_coord, "target")
         return self._obs()
 
     def step(self, action):
@@ -91,7 +93,7 @@ class RectEnv(gym.Env):
         # print(self.action_map[action[0]], self.action_map[action[1]])
         i = action[0]
         dxy = np.array(
-            [self.action_map[action[1]], self.action_map[action[2]]], dtype=np.float
+            [self.action_map[action[1]], self.action_map[action[2]]], dtype=np.int32
         )
         xy0 = self.cur_coord[i, :2] + dxy
         self.cur_coord[i] = np.concatenate(
@@ -104,23 +106,26 @@ class RectEnv(gym.Env):
 
         return self._obs(), reward, done, {}
 
-    def _render(self, coord: np.ndarray) -> np.ndarray:
+    def _render(self, coord: np.ndarray, name: str) -> np.ndarray:
         """Args: coord: (n_items, 4)"""
+        print(coord)
+
         im = Image.new("L", (self.width, self.width))
         draw = ImageDraw.Draw(im)
-
         for _, c in enumerate(coord):
             draw.rectangle(tuple(c), fill=255)
+        im.save("./logs/{}-{}.png".format(name, self.cur_step))
 
         # normalize & transform image
-        x = np.array(im, dtype=np.float) / 255.0
+        x = np.array(im, dtype=np.float) / 255.
         x = np.expand_dims(x, axis=-1)  # (H, W, C=1)
+
         return x
 
     def _obs(self):
         return {
-            "target": self._render(self.target_coord),
-            "canvas": self._render(self.cur_coord),
+            "target": self.target_im,
+            "canvas": self._render(self.cur_coord, "cur"),
             "coord": self.cur_coord / self.width
         }
 
