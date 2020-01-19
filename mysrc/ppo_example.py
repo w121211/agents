@@ -18,7 +18,7 @@ r"""Train and Eval PPO.
 To run:
 
 ```bash
-tensorboard --logdir $HOME/tmp/ppo/gym/HalfCheetah-v2/ --port 2223 &
+tensorboard --logdir $HOME/tmp/ppo/gym/HalfCheetah-v2/ --port 6006 --bind_all &
 
 python tf_agents/agents/ppo/examples/v2/train_eval.py \
   --root_dir=$HOME/tmp/ppo/gym/HalfCheetah-v2/ \
@@ -227,11 +227,13 @@ def train_eval(
 
         train_checkpointer = common.Checkpointer(
             ckpt_dir=train_dir,
+            max_to_keep=5,
             agent=tf_agent,
             global_step=global_step,
             metrics=metric_utils.MetricsGroup(train_metrics, 'train_metrics'))
         policy_checkpointer = common.Checkpointer(
             ckpt_dir=os.path.join(train_dir, 'policy'),
+            max_to_keep=5,
             policy=eval_policy,
             global_step=global_step)
         saved_model = policy_saver.PolicySaver(

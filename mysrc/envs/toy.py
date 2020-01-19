@@ -108,7 +108,7 @@ class RectEnv(gym.Env):
 
     def _render(self, coord: np.ndarray, name: str) -> np.ndarray:
         """Args: coord: (n_items, 4)"""
-        print(coord)
+        # print(coord)
 
         im = Image.new("L", (self.width, self.width))
         draw = ImageDraw.Draw(im)
