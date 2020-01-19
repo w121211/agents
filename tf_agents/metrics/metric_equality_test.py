@@ -21,6 +21,8 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
+from six.moves import range
+from six.moves import zip
 import tensorflow as tf  # pylint: disable=g-explicit-tensorflow-version-import
 
 from tf_agents.drivers import dynamic_step_driver

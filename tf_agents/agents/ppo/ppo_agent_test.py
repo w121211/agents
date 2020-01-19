@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Lint as: python2, python3
 """Tests for TF Agents ppo_agent."""
 
 from __future__ import absolute_import
@@ -24,7 +25,8 @@ from absl.testing import parameterized
 from absl.testing.absltest import mock
 
 import numpy as np
-import tensorflow as tf
+from six.moves import range
+import tensorflow as tf  # pylint: disable=g-explicit-tensorflow-version-import
 import tensorflow_probability as tfp
 
 from tf_agents.agents.ppo import ppo_agent

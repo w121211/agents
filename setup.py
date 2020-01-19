@@ -151,7 +151,7 @@ TEST_REQUIRED_PACKAGES = [
     'scipy == 1.1.0',
 ]
 
-REQUIRED_TFP_VERSION = '0.6.0'
+REQUIRED_TFP_VERSION = '0.8.0'
 
 if '--release' in sys.argv:
   release = True
@@ -170,7 +170,17 @@ else:
   # Nightly releases use date-based versioning of the form
   # '0.0.1.dev20180305'
   project_name = 'tf-agents-nightly'
-  tfp_package_name = 'tfp-nightly'
+
+  try:
+    import tensorflow as tf  # pylint: disable=g-import-not-at-top
+  except:
+    raise ValueError('Tensorflow must be installed before installing TFAgents.')
+
+  # Force tensorflow_probability at 0.8.0 for TF 1.x compatibility.
+  if tf.__version__.startswith('1'):
+    tfp_package_name = 'tensorflow-probability==0.8.0'
+  else:
+    tfp_package_name = 'tfp-nightly'
 
 REQUIRED_PACKAGES.append(tfp_package_name)
 
@@ -204,6 +214,8 @@ setup(
     install_requires=REQUIRED_PACKAGES,
     tests_require=TEST_REQUIRED_PACKAGES,
     extras_require={'tests': TEST_REQUIRED_PACKAGES},
+    # Supports Python 3 only.
+    python_requires='>=3',
     # Add in any packaged data.
     zip_safe=False,
     distclass=BinaryDistribution,
@@ -216,8 +228,6 @@ setup(
         'Intended Audience :: Education',
         'Intended Audience :: Science/Research',
         'License :: OSI Approved :: Apache Software License',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',

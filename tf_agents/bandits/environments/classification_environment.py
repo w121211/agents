@@ -20,7 +20,7 @@ from __future__ import division
 from __future__ import print_function
 
 import gin
-import tensorflow as tf
+import tensorflow as tf  # pylint: disable=g-explicit-tensorflow-version-import
 import tensorflow_probability as tfp
 from tf_agents.bandits.environments import bandit_tf_environment as bte
 from tf_agents.specs import tensor_spec
@@ -110,7 +110,7 @@ class ClassificationBanditEnvironment(bte.BanditTFEnvironment):
 
     dataset = dataset.batch(batch_size, drop_remainder=True)
     if repeat_dataset:
-      dataset.repeat()
+      dataset = dataset.repeat()
     self._data_iterator = eager_utils.dataset_iterator(dataset)
     self._current_label = tf.compat.v2.Variable(
         tf.zeros(batch_size, dtype=lbl_dtype))
